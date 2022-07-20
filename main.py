@@ -4,6 +4,7 @@ from web3 import Web3
 import settings
 from decouple import config
 
+
 POOL_FEE = 3000
 WETH_AMOUNT = 1
 WETH_AMOUNT_IN_WEI = Web3.toWei(WETH_AMOUNT, 'ether')
