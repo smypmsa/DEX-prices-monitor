@@ -1,3 +1,3 @@
 # DEX prices monitor
 
-Monitor prices on Ethereum DEXes and look for arbitrage opportunities.
+Monitor prices on Ethereum DEXes and check arbitrage opportunities.
