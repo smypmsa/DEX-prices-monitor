@@ -1,47 +1,130 @@
 import json
 from web3 import Web3
 
+import pandas as pd
+
 import settings
 from decouple import config
 
-
 POOL_FEE = 3000
-WETH_AMOUNT = 1
-WETH_AMOUNT_IN_WEI = Web3.toWei(WETH_AMOUNT, 'ether')
+SWAP_TOKEN_AMOUNT = 1
+SWAP_TOKEN_DECIMALS = 6
+SWAP_AMOUNT_IN_WEI = SWAP_TOKEN_AMOUNT * 10 ** SWAP_TOKEN_DECIMALS
 
 provider_url = f"https://eth-mainnet.g.alchemy.com/v2/{config('INFURA_PROJECT_ID')}"
 web3 = Web3(Web3.HTTPProvider(provider_url))
 
-uniswapv2_router2_contract = web3.eth.contract(address=settings.uniswapv2_router2_address,
-                                               abi=json.loads(settings.uniswapv2_router2_abi))
 
-uniswapv3_quoter3_contract = web3.eth.contract(address=settings.uniswapv3_quoter3_address,
-                                               abi=json.loads(settings.uniswapv3_quoter3_abi))
+def get_max_for_input_token_uniswap_v2(input_amount,
+                                       input_token_address,
+                                       output_token_address,
+                                       output_token_decimals):
+    try:
+        amount_in_wei = uniswapv2_router2_contract.functions.getAmountsOut(
+            input_amount,
+            [input_token_address,
+             output_token_address]
+        ).call()[1]
+        return amount_in_wei / (10 ** output_token_decimals)
+    except Exception as e:
+        return str(e)
 
-# Option 1: Buy on Uniswap V2, sell on Uniswap v3
-dai_for_eth_amount = uniswapv2_router2_contract.functions.getAmountsOut(WETH_AMOUNT_IN_WEI,
-                                                                        [settings.weth_address,
-                                                                         settings.dai_address]).call()[1]
 
-eth_for_dai_amount = uniswapv3_quoter3_contract.functions.quoteExactInputSingle(settings.dai_address,
-                                                                                settings.weth_address,
-                                                                                POOL_FEE,
-                                                                                dai_for_eth_amount,
-                                                                                0).call()
+def get_max_for_input_token_uniswap_v3(input_amount,
+                                       input_token_address,
+                                       output_token_address,
+                                       output_token_decimals):
+    try:
+        amount_in_wei = uniswapv3_quoter3_contract.functions.quoteExactInputSingle(
+            input_token_address,
+            output_token_address,
+            POOL_FEE,
+            input_amount,
+            0
+        ).call()
+        return amount_in_wei / (10 ** output_token_decimals)
+    except Exception as e:
+        return str(e)
 
-# Option 2: Buy on Uniswap V3, sell on Uniswap v2
-dai_for_eth_amount3 = uniswapv3_quoter3_contract.functions.quoteExactInputSingle(settings.weth_address,
-                                                                                 settings.dai_address,
-                                                                                 POOL_FEE,
-                                                                                 WETH_AMOUNT_IN_WEI,
-                                                                                 0).call()
 
-eth_for_dai_amount3 = uniswapv2_router2_contract.functions.getAmountsOut(dai_for_eth_amount3,
-                                                                         [settings.dai_address,
-                                                                          settings.weth_address]).call()[1]
+# TODO: add def retrieve decimals of the token
 
-arbitrage_result_in_weth_1 = Web3.fromWei(eth_for_dai_amount, 'ether') - WETH_AMOUNT
-arbitrage_result_in_weth_2 = Web3.fromWei(eth_for_dai_amount3, 'ether') - WETH_AMOUNT
 
-print(arbitrage_result_in_weth_1)
-print(arbitrage_result_in_weth_2)
+# Sources for prices (DEXes smart contracts)
+# Uniswap V2
+uniswapv2_router2_contract = web3.eth.contract(
+    address=settings.uniswapv2_router2_address,
+    abi=json.loads(settings.uniswapv2_router2_abi)
+)
+
+# Uniswap V3
+uniswapv3_quoter3_contract = web3.eth.contract(
+    address=settings.uniswapv3_quoter3_address,
+    abi=json.loads(settings.uniswapv3_quoter3_abi)
+)
+
+# TODO: Sushiswap
+# TODO: Balancer
+
+# Import tokens names and addresses
+header = ['token_name',
+          'token_address',
+          'token_decimals']
+
+df_tokens = pd.read_csv('tokens_list.csv', names=header)
+df_tokens['token_address'] = df_tokens['token_address'].apply(Web3.toChecksumAddress)
+
+# BUYING
+df_tokens['amount_for_input_token_uni_v2'] = df_tokens.apply(
+    lambda df: get_max_for_input_token_uniswap_v2(
+        input_amount=SWAP_AMOUNT_IN_WEI,
+        input_token_address=settings.usdc_address,
+        output_token_address=df['token_address'],
+        output_token_decimals=df['token_decimals']
+    ),
+    axis=1
+)
+
+df_tokens['amount_for_input_token_uni_v3'] = df_tokens.apply(
+    lambda df: get_max_for_input_token_uniswap_v3(
+        input_amount=SWAP_AMOUNT_IN_WEI,
+        input_token_address=settings.usdc_address,
+        output_token_address=df['token_address'],
+        output_token_decimals=df['token_decimals']
+    ),
+    axis=1
+)
+
+df_tokens['max_amount_for_input_token'] = df_tokens[['amount_for_input_token_uni_v2',
+                                                     'amount_for_input_token_uni_v3']].max(axis=1)
+df_tokens['max_amount_for_input_token_wei_int'] = (df_tokens['max_amount_for_input_token'] *
+                                                   10 ** df_tokens['token_decimals']).astype(int)
+
+# SELLING
+df_tokens['amount_for_quote_token_uni_v2'] = df_tokens.apply(
+    lambda df: get_max_for_input_token_uniswap_v2(
+        input_amount=df['max_amount_for_input_token_wei_int'],
+        input_token_address=df['token_address'],
+        output_token_address=settings.usdc_address,
+        output_token_decimals=SWAP_TOKEN_DECIMALS
+    ),
+    axis=1
+)
+
+df_tokens['amount_for_quote_token_uni_v3'] = df_tokens.apply(
+    lambda df: get_max_for_input_token_uniswap_v3(
+        input_amount=df['max_amount_for_input_token_wei_int'],
+        input_token_address=df['token_address'],
+        output_token_address=settings.usdc_address,
+        output_token_decimals=SWAP_TOKEN_DECIMALS
+    ),
+    axis=1
+)
+
+df_tokens['max_amount_for_token'] = df_tokens[['amount_for_quote_token_uni_v2',
+                                               'amount_for_quote_token_uni_v3']].max(axis=1)
+
+df_tokens['arbitrage_result'] = round((df_tokens['max_amount_for_token'] - SWAP_TOKEN_AMOUNT) / \
+                                      df_tokens['max_amount_for_input_token'], 4)
+
+print(1)
