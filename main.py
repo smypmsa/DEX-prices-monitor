@@ -11,7 +11,7 @@ SWAP_TOKEN_AMOUNT = 1
 SWAP_TOKEN_DECIMALS = 6
 SWAP_AMOUNT_IN_WEI = SWAP_TOKEN_AMOUNT * 10 ** SWAP_TOKEN_DECIMALS
 
-provider_url = f"https://eth-mainnet.g.alchemy.com/v2/{config('INFURA_PROJECT_ID')}"
+provider_url = f"https://mainnet.infura.io/v3/{config('INFURA_PROJECT_ID')}"
 web3 = Web3(Web3.HTTPProvider(provider_url))
 
 
@@ -127,4 +127,4 @@ df_tokens['max_amount_for_token'] = df_tokens[['amount_for_quote_token_uni_v2',
 df_tokens['arbitrage_result'] = round((df_tokens['max_amount_for_token'] - SWAP_TOKEN_AMOUNT) / \
                                       df_tokens['max_amount_for_input_token'], 4)
 
-print(1)
+df_tokens.to_csv('arbitrage_table.csv')
